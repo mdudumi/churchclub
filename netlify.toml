@@ -1,12 +1,9 @@
 [build]
-  command = npm run build
-  publish = dist
+  command = "npm run build"
+  publish = "dist"
 
 [build.environment]
-  NODE_VERSION = 18
-
-[build.processing]
-  skip_processing = true
+  NODE_VERSION = "18"
 
 [secrets]
-  omit_keys = [VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY]
+  omit_keys = ["VITE_SUPABASE_URL", "VITE_SUPABASE_ANON_KEY"]
