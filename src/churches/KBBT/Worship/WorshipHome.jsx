@@ -12,6 +12,7 @@ import {
   Edit,
   Trash2,
   Plus,
+  XCircle,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import toast from "react-hot-toast";
@@ -23,7 +24,8 @@ import Select from "react-select";
 export default function WorshipHome() {
   const navigate = useNavigate();
   const [songs, setSongs] = useState([]);
-  const [search, setSearch] = useState(""); // 🔎 për PPT builder
+  const [search, setSearch] = useState(""); // global search
+  const [searchSong, setSearchSong] = useState(""); // visible only in "Shiko këngë"
   const [pptCount, setPptCount] = useState(0);
   const [selectedList, setSelectedList] = useState([]);
 
@@ -32,20 +34,14 @@ export default function WorshipHome() {
 
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [currentSong, setCurrentSong] = useState(null);
-
   const [customFileName, setCustomFileName] = useState("");
 
-  // 🔎 state i veçantë për combo-box “Shiko këngë”
-  const [searchSong, setSearchSong] = useState("");
   const [comboOpen, setComboOpen] = useState(false);
   const comboRef = useRef(null);
 
-  // 🔒 Protect route
   useEffect(() => {
     const hasAccess = localStorage.getItem("worship_access") === "true";
-    if (!hasAccess) {
-      navigate("/kbbt", { replace: true });
-    }
+    if (!hasAccess) navigate("/kbbt", { replace: true });
     fetchSongs();
   }, [navigate]);
 
@@ -56,11 +52,8 @@ export default function WorshipHome() {
       .eq("church_slug", "kbbt")
       .order("title");
 
-    if (error) {
-      toast.error("Nuk mund të marrim këngët");
-    } else {
-      setSongs(data);
-    }
+    if (error) toast.error("Nuk mund të marrim këngët");
+    else setSongs(data);
   }
 
   function openEditor(song = null) {
@@ -68,7 +61,6 @@ export default function WorshipHome() {
     setIsEditorOpen(true);
   }
 
-  // mbyll dropdown kur klikon jashtë
   useEffect(() => {
     function handleClickOutside(event) {
       if (comboRef.current && !comboRef.current.contains(event.target)) {
@@ -79,6 +71,23 @@ export default function WorshipHome() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  // ✅ filter globally, using global search
+  const filteredSongs = songs.filter(
+    (s) =>
+      s.title.toLowerCase().includes(search.toLowerCase()) ||
+      (s.structure &&
+        JSON.stringify(s.structure)
+          .toLowerCase()
+          .includes(search.toLowerCase()))
+  );
+
+  // ✅ local filtering for "Shiko këngë" field
+  const filteredForShiko = filteredSongs.filter((s) =>
+    s.title.toLowerCase().includes(searchSong.toLowerCase())
+  );
+
+  const clearSearch = () => setSearch("");
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-rose-50 via-white to-rose-100 flex flex-col">
       {/* Header */}
@@ -87,24 +96,21 @@ export default function WorshipHome() {
           Adhurimi
         </h1>
         <div className="flex items-center gap-2">
-          {/* Back */}
           <button
             onClick={() => navigate("/kbbt")}
             className="flex items-center gap-2 bg-gray-300 text-gray-800 px-4 py-2 rounded-lg hover:bg-gray-400 transition"
           >
             <ArrowLeft size={18} />
-            <span className="hidden sm:inline">Back</span>
+            <span className="hidden sm:inline">Kthehu</span>
           </button>
 
-          {/* Prayers for Worship */}
           <button
             onClick={() => navigate("/kbbt/worship/prayers")}
             className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition"
           >
-            🙏 Prayers
+            🙏 Lutje
           </button>
 
-          {/* Logout */}
           <button
             onClick={() => {
               localStorage.removeItem("worship_access");
@@ -113,27 +119,60 @@ export default function WorshipHome() {
             className="flex items-center gap-2 bg-rose-600 text-white px-4 py-2 rounded-lg hover:bg-rose-700 transition"
           >
             <LogOut size={18} />
-            <span className="hidden sm:inline">Logout</span>
+            <span className="hidden sm:inline">Mbyll App</span>
           </button>
         </div>
       </header>
 
       <main className="flex-1 px-6 pt-9 max-w-6xl mx-auto w-full flex flex-col gap-6">
-        {/* Kërko këngë (për PPT builder) */}
-        <div className="bg-white shadow-md rounded-xl p-4">
+        {/* 🔍 Kërko këngë */}
+        <div className="bg-white shadow-md rounded-xl p-4 relative">
           <h2 className="font-semibold mb-2 flex items-center gap-2">
             <Search size={18} /> Kërko këngë
           </h2>
-          <input
-            type="text"
-            placeholder="Shkruaj një pjesë të tekstit..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full border rounded px-3 py-2"
-          />
+          <div className="relative">
+            <input
+              type="text"
+              placeholder="Shkruaj titull ose tekst këngë..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full border rounded px-3 py-2 pr-10"
+            />
+            {search && (
+              <button
+                onClick={clearSearch}
+                className="absolute right-2 top-2 text-gray-500 hover:text-red-600 transition"
+                title="Fshi kërkimin"
+              >
+                <XCircle size={20} />
+              </button>
+            )}
+          </div>
+
+          {search && (
+            <div className="mt-3 border rounded bg-gray-50 p-2 max-h-48 overflow-y-auto">
+              {filteredSongs.length > 0 ? (
+                filteredSongs.map((song) => (
+                  <div
+                    key={song.id}
+                    onClick={() => {
+                      setSelectedSong(song);
+                      setSearchSong(song.title);
+                      setSearch("");
+                    }}
+                    className="p-2 cursor-pointer hover:bg-gray-100 rounded"
+                  >
+                    {song.title}
+                  </div>
+                ))
+              ) : (
+                <div className="text-gray-500 p-2">Asnjë këngë nuk u gjet</div>
+              )}
+            </div>
+          )}
         </div>
 
-        {/* Shiko këngë (combo-box i pavarur) */}
+        {/* 🎵 Shiko këngë */}
         <div className="bg-white shadow-md rounded-xl p-4" ref={comboRef}>
           <h2 className="font-semibold mb-2">Shiko këngë</h2>
           <div className="flex gap-3 mb-3">
@@ -142,27 +181,17 @@ export default function WorshipHome() {
                 type="text"
                 placeholder="Kërko ose zgjidh këngë..."
                 value={searchSong}
+                onFocus={() => setComboOpen(true)}
                 onChange={(e) => {
                   setSearchSong(e.target.value);
                   setComboOpen(true);
                 }}
-                onFocus={() => setComboOpen(true)}
                 className="border rounded p-2 w-full"
               />
               {comboOpen && (
                 <div className="absolute z-10 bg-white border rounded mt-1 w-full max-h-48 overflow-y-auto shadow-lg">
-                  {songs
-                    .filter(
-                      (s) =>
-                        s.title
-                          .toLowerCase()
-                          .includes(searchSong.toLowerCase()) ||
-                        (s.structure &&
-                          JSON.stringify(s.structure)
-                            .toLowerCase()
-                            .includes(searchSong.toLowerCase()))
-                    )
-                    .map((song) => (
+                  {filteredForShiko.length > 0 ? (
+                    filteredForShiko.map((song) => (
                       <div
                         key={song.id}
                         onClick={() => {
@@ -174,17 +203,8 @@ export default function WorshipHome() {
                       >
                         {song.title}
                       </div>
-                    ))}
-                  {songs.filter(
-                    (s) =>
-                      s.title
-                        .toLowerCase()
-                        .includes(searchSong.toLowerCase()) ||
-                      (s.structure &&
-                        JSON.stringify(s.structure)
-                          .toLowerCase()
-                          .includes(searchSong.toLowerCase()))
-                  ).length === 0 && (
+                    ))
+                  ) : (
                     <div className="px-3 py-2 text-gray-500">
                       Asnjë këngë nuk u gjet
                     </div>
@@ -203,7 +223,6 @@ export default function WorshipHome() {
 
           {selectedSong && (
             <>
-              {/* Metadata */}
               <div className="mb-4 bg-gray-50 p-3 rounded border">
                 <h2 className="text-2xl font-bold text-gray-900">
                   {selectedSong.title}
@@ -241,7 +260,6 @@ export default function WorshipHome() {
                 </button>
               </div>
 
-              {/* Shfaq strukturen sipas rendit */}
               <div className="bg-gray-100 p-4 rounded space-y-4">
                 {(selectedSong.structureOrder ||
                   Object.keys(selectedSong.structure || {})).map(
@@ -270,26 +288,11 @@ export default function WorshipHome() {
                   }
                 )}
               </div>
-
-              <div className="flex gap-2 mt-2">
-                <button
-                  className="flex items-center gap-1 bg-yellow-400 px-2 py-1 rounded"
-                  onClick={() => openEditor(selectedSong)}
-                >
-                  <Edit size={16} /> Edito
-                </button>
-                <button
-                  className="flex items-center gap-1 bg-red-500 text-white px-2 py-1 rounded"
-                  onClick={() => openEditor(selectedSong)}
-                >
-                  <Trash2 size={16} /> Fshij
-                </button>
-              </div>
             </>
           )}
         </div>
 
-        {/* PowerPoint & PDF Builder */}
+        {/* 📑 PowerPoint & PDF Builder */}
         <div className="bg-white shadow-md rounded-xl p-4">
           <h2 className="font-semibold mb-2 flex items-center gap-2">
             <Filter size={18} /> PowerPoint & PDF Builder
@@ -300,7 +303,7 @@ export default function WorshipHome() {
             <input
               type="number"
               min="1"
-              max={songs.length}
+              max={filteredSongs.length}
               value={pptCount}
               onChange={(e) => {
                 setPptCount(Number(e.target.value));
@@ -318,16 +321,23 @@ export default function WorshipHome() {
             className="border rounded px-3 py-2 mb-3 w-full"
           />
 
-          {/* Multi-select dropdown */}
           <Select
             isMulti
-            options={songs.map((s) => ({ value: s.id, label: s.title }))}
-            onChange={(selected) => {
+            options={filteredSongs.map((s) => ({
+              value: s.id,
+              label: s.title,
+            }))}
+            onChange={(selected) =>
               setSelectedList(
-                selected.map((sel) => songs.find((s) => s.id === sel.value))
-              );
-            }}
-            value={selectedList.map((s) => ({ value: s.id, label: s.title }))}
+                selected.map((sel) =>
+                  filteredSongs.find((s) => s.id === sel.value)
+                )
+              )
+            }
+            value={selectedList.map((s) => ({
+              value: s.id,
+              label: s.title,
+            }))}
             placeholder="Kërko dhe zgjidh këngë..."
             className="mb-4"
           />
@@ -352,7 +362,6 @@ export default function WorshipHome() {
         </div>
       </main>
 
-      {/* Modal Editor */}
       <SongEditor
         isOpen={isEditorOpen}
         onClose={() => setIsEditorOpen(false)}
