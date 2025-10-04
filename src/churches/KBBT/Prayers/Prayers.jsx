@@ -1,7 +1,7 @@
-// src/churches/KBBT/NextStep/Prayers/Prayers.jsx
+// src/churches/KBBT/Prayers/Prayers.jsx
 import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
-import { ArrowLeft, Share2, FileText } from "lucide-react";
+import { ArrowLeft, Share2, FileText, Edit, Trash2, Check } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 import toast from "react-hot-toast";
 
@@ -9,10 +9,12 @@ export default function Prayers() {
   const navigate = useNavigate();
   const { serviceSlug } = useParams();
 
-  // 🔹 Requests & Answered
+  // 🔹 Data
   const [requests, setRequests] = useState([]);
   const [answered, setAnswered] = useState([]);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [userId, setUserId] = useState(null);
+  const [reactions, setReactions] = useState({});
 
   // 🔹 Filters
   const [filterCategory, setFilterCategory] = useState("Të gjitha");
@@ -22,7 +24,10 @@ export default function Prayers() {
   const [dateTo, setDateTo] = useState("");
 
   // 🔹 Sorting
-  const [sortConfig, setSortConfig] = useState({ key: "created_at", direction: "desc" });
+  const [sortConfig, setSortConfig] = useState({
+    key: "created_at",
+    direction: "desc",
+  });
 
   // 🔹 Pagination
   const pageSize = 5;
@@ -34,13 +39,12 @@ export default function Prayers() {
   const [editText, setEditText] = useState("");
   const [editCategory, setEditCategory] = useState("Të tjera");
 
-  // 🔹 Prayer Form States
+  // 🔹 Prayer/Testimony forms
   const [namePrayer, setNamePrayer] = useState("");
   const [textPrayer, setTextPrayer] = useState("");
   const [categoryPrayer, setCategoryPrayer] = useState("Të tjera");
   const [loadingPrayer, setLoadingPrayer] = useState(false);
 
-  // 🔹 Testimony Form States
   const [nameTestimony, setNameTestimony] = useState("");
   const [textTestimony, setTextTestimony] = useState("");
   const [categoryTestimony, setCategoryTestimony] = useState("Të tjera");
@@ -54,16 +58,12 @@ export default function Prayers() {
       .eq("church_slug", "kbbt")
       .order("created_at", { ascending: false });
 
-    if (serviceSlug) {
-      query = query.eq("service_slug", serviceSlug);
-    } else {
-      query = query.is("service_slug", null);
-    }
+    if (serviceSlug) query = query.eq("service_slug", serviceSlug);
+    else query = query.is("service_slug", null);
 
     const { data, error } = await query;
-
     if (error) {
-      console.error("Supabase error:", error.message);
+      console.error(error);
       toast.error("Nuk mund të marrim lutjet.");
       return;
     }
@@ -72,14 +72,16 @@ export default function Prayers() {
     setAnswered(data.filter((p) => p.status === "answered"));
   };
 
-  // 🔹 Check role
+  // 🔹 Fetch role & user
   const fetchRole = async () => {
     const {
       data: { user },
     } = await supabase.auth.getUser();
     if (!user) return;
 
-    let { data, error } = await supabase
+    setUserId(user.id);
+
+    const { data, error } = await supabase
       .from("profiles")
       .select("is_admin")
       .eq("user_id", user.id)
@@ -88,16 +90,68 @@ export default function Prayers() {
     if (!error) setIsAdmin(data?.is_admin || false);
   };
 
+  // 🔹 Fetch reactions
+  const fetchReactions = async () => {
+    const { data, error } = await supabase
+      .from("prayer_reactions")
+      .select("prayer_id, user_id");
+    if (error) return console.error(error);
+
+    const grouped = data.reduce((acc, r) => {
+      if (!acc[r.prayer_id]) acc[r.prayer_id] = [];
+      acc[r.prayer_id].push(r.user_id);
+      return acc;
+    }, {});
+    setReactions(grouped);
+  };
+
   useEffect(() => {
     fetchPrayers();
     fetchRole();
+    fetchReactions();
   }, [serviceSlug]);
 
-  // Reset pages when filters/search/sort change
   useEffect(() => {
     setPageRequests(1);
     setPageAnswered(1);
   }, [filterCategory, filterStatus, search, dateFrom, dateTo, sortConfig]);
+
+  // 🔹 Realtime reactions
+  useEffect(() => {
+    const channel = supabase
+      .channel("prayer_reactions_changes")
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "prayer_reactions",
+        },
+        (payload) => {
+          const { eventType, new: newReaction, old: oldReaction } = payload;
+          setReactions((prev) => {
+            const updated = { ...prev };
+            if (eventType === "INSERT" && newReaction) {
+              const pid = newReaction.prayer_id;
+              if (!updated[pid]) updated[pid] = [];
+              if (!updated[pid].includes(newReaction.user_id))
+                updated[pid].push(newReaction.user_id);
+            }
+            if (eventType === "DELETE" && oldReaction) {
+              const pid = oldReaction.prayer_id;
+              if (updated[pid])
+                updated[pid] = updated[pid].filter(
+                  (uid) => uid !== oldReaction.user_id
+                );
+            }
+            return updated;
+          });
+        }
+      )
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
+  }, []);
 
   // 🔹 Helpers
   const withinDateRange = (date) => {
@@ -120,13 +174,13 @@ export default function Prayers() {
           ? p.status === "request"
           : p.status === "answered"
       )
-      .filter((p) =>
-        p.text.toLowerCase().includes(search.toLowerCase()) ||
-        p.name.toLowerCase().includes(search.toLowerCase())
+      .filter(
+        (p) =>
+          p.text.toLowerCase().includes(search.toLowerCase()) ||
+          p.name.toLowerCase().includes(search.toLowerCase())
       )
       .filter((p) => withinDateRange(p.created_at));
 
-    // Apply sorting
     if (sortConfig) {
       result = [...result].sort((a, b) => {
         const aVal = a[sortConfig.key];
@@ -136,11 +190,9 @@ export default function Prayers() {
         return 0;
       });
     }
-
     return result;
   };
 
-  // 🔹 Categories
   const categories = [
     "Të gjitha",
     "Shëndeti",
@@ -157,194 +209,51 @@ export default function Prayers() {
   ];
   const statuses = ["Të gjitha", "Kërkesa", "Përgjigjur"];
 
-  // 🔹 Table Row
-  const PrayerRow = ({ p }) => (
-    <tr className="hover:bg-gray-50 transition">
-      <td className="px-4 py-2 font-semibold text-gray-800">{p.name}</td>
-      <td className="px-4 py-2">{p.text}</td>
-      <td className="px-4 py-2 text-center">{p.category}</td>
-      <td className="px-4 py-2 text-center">
-        {new Date(p.created_at).toLocaleDateString("sq-AL")}
-      </td>
-      <td className="px-4 py-2 text-right space-x-2">
-        <button
-          onClick={() => handleShare(p)}
-          className="px-3 py-1 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-        >
-          <Share2 size={16} />
-        </button>
-        {isAdmin && (
-          <>
-            {p.status === "request" && (
-              <button
-                onClick={() => handleMarkAnswered(p.id)}
-                className="px-3 py-1 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700"
-              >
-                Shëno
-              </button>
-            )}
-            {p.status === "answered" && (
-              <button
-                onClick={() => handleMarkRequest(p.id)}
-                className="px-3 py-1 text-sm bg-orange-600 text-white rounded-lg hover:bg-orange-700"
-              >
-                ↩ Kthe
-              </button>
-            )}
-            <button
-              onClick={() => handleEdit(p)}
-              className="px-3 py-1 text-sm bg-yellow-500 text-white rounded-lg hover:bg-yellow-600"
-            >
-              Edito
-            </button>
-            <button
-              onClick={() => handleDelete(p.id)}
-              className="px-3 py-1 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700"
-            >
-              Fshi
-            </button>
-          </>
-        )}
-      </td>
-    </tr>
-  );
+  // 🔹 Reaction handler
+  const handlePray = async (prayerId) => {
+    if (!userId) return toast.error("Duhet të jeni i kyçur për të lutur.");
+    const hasPrayed = reactions[prayerId]?.includes(userId);
 
-  // 🔹 Sorting helper
-  const handleSort = (key) => {
-    let direction = "asc";
-    if (sortConfig.key === key && sortConfig.direction === "asc") {
-      direction = "desc";
+    if (hasPrayed) {
+      const { error } = await supabase
+        .from("prayer_reactions")
+        .delete()
+        .eq("prayer_id", prayerId)
+        .eq("user_id", userId);
+      if (error) return;
+    } else {
+      const { error } = await supabase
+        .from("prayer_reactions")
+        .insert([{ prayer_id: prayerId, user_id: userId }]);
+      if (!error) toast.success("Po lutesh për këtë kërkesë 🙏");
     }
-    setSortConfig({ key, direction });
   };
 
-  const SortableHeader = ({ columnKey, label, center, right }) => (
-    <th
-      onClick={() => handleSort(columnKey)}
-      className={`px-4 py-2 cursor-pointer select-none ${
-        center ? "text-center" : right ? "text-right" : "text-left"
-      }`}
-    >
-      {label}{" "}
-      {sortConfig.key === columnKey &&
-        (sortConfig.direction === "asc" ? "▲" : "▼")}
-    </th>
-  );
-
-  // 🔹 Pagination
-  const paginate = (list, page) => {
-    const start = (page - 1) * pageSize;
-    return list.slice(start, start + pageSize);
-  };
-
-  const PaginationControls = ({ list, page, setPage }) => {
-    const totalPages = Math.ceil(list.length / pageSize);
-    if (totalPages <= 1) return null;
-
-    return (
-      <div className="flex justify-center items-center gap-4 mt-4">
-        <button
-          onClick={() => setPage((p) => Math.max(1, p - 1))}
-          disabled={page === 1}
-          className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg disabled:opacity-50 hover:bg-gray-300"
-        >
-          ‹ Mbrapa
-        </button>
-        <span className="font-semibold text-gray-700">
-          Faqja {page} nga {totalPages}
-        </span>
-        <button
-          onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-          disabled={page === totalPages}
-          className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg disabled:opacity-50 hover:bg-gray-300"
-        >
-          Para ›
-        </button>
-      </div>
-    );
-  };
-
-  // 🔹 Handlers (add, edit, delete, share)
-  const handleAddPrayer = async (e) => {
-    e.preventDefault();
-    if (!textPrayer.trim() || !namePrayer.trim()) {
-      toast.error("Ju lutem shkruani emrin dhe lutjen.");
-      return;
-    }
-    setLoadingPrayer(true);
-
-    const { error } = await supabase.from("prayers").insert([
-      {
-        church_slug: "kbbt",
-        service_slug: serviceSlug || null,
-        name: namePrayer,
-        text: textPrayer,
-        category: categoryPrayer,
-        status: "request",
-      },
-    ]);
-
-    if (error) toast.error("Gabim gjatë shtimit të lutjes.");
-    else {
-      toast.success("Lutja u shtua me sukses!");
-      setNamePrayer("");
-      setTextPrayer("");
-      setCategoryPrayer("Të tjera");
-      fetchPrayers();
-    }
-    setLoadingPrayer(false);
-  };
-
-  const handleAddTestimony = async (e) => {
-    e.preventDefault();
-    if (!textTestimony.trim() || !nameTestimony.trim()) {
-      toast.error("Ju lutem shkruani emrin dhe dëshminë.");
-      return;
-    }
-    setLoadingTestimony(true);
-
-    const { error } = await supabase.from("prayers").insert([
-      {
-        church_slug: "kbbt",
-        service_slug: serviceSlug || null,
-        name: nameTestimony,
-        text: textTestimony,
-        category: categoryTestimony,
-        status: "answered",
-      },
-    ]);
-
-    if (error) toast.error("Gabim gjatë shtimit të dëshmisë.");
-    else {
-      toast.success("Dëshmia u shtua me sukses!");
-      setNameTestimony("");
-      setTextTestimony("");
-      setCategoryTestimony("Të tjera");
-      fetchPrayers();
-    }
-    setLoadingTestimony(false);
-  };
-
+  // 🔹 Admin Handlers
   const handleMarkAnswered = async (id) => {
+    if (!isAdmin) return toast.error("Nuk keni leje.");
     await supabase.from("prayers").update({ status: "answered" }).eq("id", id);
-    toast.success("Lutja u shënua si e përgjigjur.");
+    toast.success("Shënuar si përgjigjur.");
     fetchPrayers();
   };
 
   const handleMarkRequest = async (id) => {
+    if (!isAdmin) return toast.error("Nuk keni leje.");
     await supabase.from("prayers").update({ status: "request" }).eq("id", id);
-    toast.success("Dëshmia u kthye në lutje.");
+    toast.success("Kthyer në kërkesë.");
     fetchPrayers();
   };
 
   const handleDelete = async (id) => {
-    if (!confirm("A jeni i sigurt që doni ta fshini këtë lutje?")) return;
+    if (!isAdmin) return toast.error("Nuk keni leje.");
+    if (!confirm("A jeni i sigurt?")) return;
     await supabase.from("prayers").delete().eq("id", id);
-    toast.success("Lutja u fshi.");
+    toast.success("Fshirë me sukses.");
     fetchPrayers();
   };
 
   const handleEdit = (p) => {
+    if (!isAdmin) return;
     setEditingPrayer(p);
     setEditText(p.text);
     setEditCategory(p.category);
@@ -356,10 +265,9 @@ export default function Prayers() {
       .from("prayers")
       .update({ text: editText, category: editCategory })
       .eq("id", editingPrayer.id);
-
-    if (error) toast.error("Gabim gjatë editimit.");
+    if (error) toast.error("Gabim gjatë ruajtjes.");
     else {
-      toast.success("Lutja u përditësua!");
+      toast.success("Përditësuar me sukses.");
       setEditingPrayer(null);
       fetchPrayers();
     }
@@ -369,58 +277,139 @@ export default function Prayers() {
     const text = `🙏 Lutje nga ${p.name} (${p.category}) më ${new Date(
       p.created_at
     ).toLocaleDateString("sq-AL")}: "${p.text}"`;
-    if (navigator.share) {
-      navigator.share({ title: "Lutje", text });
-    } else {
+    if (navigator.share) navigator.share({ title: "Lutje", text });
+    else {
       navigator.clipboard.writeText(text);
-      toast.success("Lutja u kopjua në clipboard!");
+      toast.success("Lutja u kopjua!");
     }
   };
 
-  const handleCreateReport = () => {
-    const list = [...filterPrayers(requests), ...filterPrayers(answered)];
-    if (list.length === 0) {
-      toast.error("Asnjë lutje për raport.");
-      return;
-    }
+  const paginate = (list, page) =>
+    list.slice((page - 1) * pageSize, (page - 1) * pageSize + pageSize);
 
-    const csv = [
-      ["Emri", "Teksti", "Kategoria", "Data", "Status"].join(","),
-      ...list.map(
-        (p) =>
-          `"${p.name}","${p.text.replace(/"/g, '""')}","${p.category}","${new Date(
-            p.created_at
-          ).toLocaleDateString("sq-AL")}","${p.status}"`
-      ),
-    ].join("\n");
+  const SortableHeader = ({ columnKey, label, center }) => (
+    <th
+      onClick={() =>
+        setSortConfig((prev) => ({
+          key: columnKey,
+          direction:
+            prev.key === columnKey && prev.direction === "asc" ? "desc" : "asc",
+        }))
+      }
+      className={`px-4 py-2 cursor-pointer select-none ${
+        center ? "text-center" : "text-left"
+      }`}
+    >
+      {label}{" "}
+      {sortConfig.key === columnKey &&
+        (sortConfig.direction === "asc" ? "▲" : "▼")}
+    </th>
+  );
 
-    const blob = new Blob([csv], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "prayers-report.csv";
-    a.click();
-    toast.success("Raporti u krijua!");
+  const PaginationControls = ({ list, page, setPage }) => {
+    const totalPages = Math.ceil(list.length / pageSize);
+    if (totalPages <= 1) return null;
+    return (
+      <div className="flex justify-center items-center gap-4 mt-4">
+        <button
+          onClick={() => setPage((p) => Math.max(1, p - 1))}
+          disabled={page === 1}
+          className="px-3 py-1 bg-gray-200 rounded disabled:opacity-50"
+        >
+          ‹
+        </button>
+        <span>
+          Faqja {page} / {totalPages}
+        </span>
+        <button
+          onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+          disabled={page === totalPages}
+          className="px-3 py-1 bg-gray-200 rounded disabled:opacity-50"
+        >
+          ›
+        </button>
+      </div>
+    );
   };
+
+  // 🔹 Prayer Row
+  const PrayerRow = ({ p }) => (
+    <tr className="hover:bg-gray-50 transition">
+      <td className="px-4 py-2 font-semibold text-gray-800">{p.name}</td>
+      <td className="px-4 py-2">{p.text}</td>
+      <td className="px-4 py-2 text-center">{p.category}</td>
+      <td className="px-4 py-2 text-center">
+        {new Date(p.created_at).toLocaleDateString("sq-AL")}
+      </td>
+      <td className="px-4 py-2 text-right flex justify-end gap-2">
+        <button
+          onClick={() => handleShare(p)}
+          title="Ndaj"
+          className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+        >
+          <Share2 size={16} />
+        </button>
+
+        <button
+          onClick={() => handlePray(p.id)}
+          title="Po lutem"
+          className={`p-2 rounded-lg ${
+            reactions[p.id]?.includes(userId)
+              ? "bg-yellow-500 text-white"
+              : "bg-gray-200 text-gray-700"
+          }`}
+        >
+          🙏 {reactions[p.id]?.length || 0}
+        </button>
+
+        {isAdmin && (
+          <>
+            {p.status === "request" ? (
+              <button
+                onClick={() => handleMarkAnswered(p.id)}
+                title="Shëno përgjigjur"
+                className="p-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+              >
+                <Check size={16} />
+              </button>
+            ) : (
+              <button
+                onClick={() => handleMarkRequest(p.id)}
+                title="Kthe si kërkesë"
+                className="p-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600"
+              >
+                ↩
+              </button>
+            )}
+            <button
+              onClick={() => handleEdit(p)}
+              title="Edito"
+              className="p-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600"
+            >
+              <Edit size={16} />
+            </button>
+            <button
+              onClick={() => handleDelete(p.id)}
+              title="Fshi"
+              className="p-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
+            >
+              <Trash2 size={16} />
+            </button>
+          </>
+        )}
+      </td>
+    </tr>
+  );
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-rose-50 via-white to-rose-100">
-      {/* Header */}
       <header className="flex items-center justify-between px-6 py-4 bg-gradient-to-r from-rose-100 to-rose-200 shadow">
         <h1 className="text-xl sm:text-2xl font-extrabold text-gray-800">
           Lutjet & Dëshmitë
         </h1>
         <div className="flex gap-3">
           <button
-            onClick={handleCreateReport}
-            className="flex items-center gap-2 bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700"
-          >
-            <FileText size={18} /> Raport
-          </button>
-          <button
-            onClick={() =>
-              navigate(serviceSlug ? `/kbbt/${serviceSlug}` : "/kbbt")
-            }
+            onClick={() => navigate(serviceSlug ? `/kbbt/${serviceSlug}` : "/kbbt")}
             className="flex items-center gap-2 bg-gray-300 text-gray-800 px-4 py-2 rounded-lg hover:bg-gray-400"
           >
             <ArrowLeft size={18} /> Kthehu
@@ -498,8 +487,16 @@ export default function Prayers() {
                     <tr>
                       <SortableHeader columnKey="name" label="Emri" />
                       <SortableHeader columnKey="text" label="Teksti" />
-                      <SortableHeader columnKey="category" label="Kategoria" center />
-                      <SortableHeader columnKey="created_at" label="Data" center />
+                      <SortableHeader
+                        columnKey="category"
+                        label="Kategoria"
+                        center
+                      />
+                      <SortableHeader
+                        columnKey="created_at"
+                        label="Data"
+                        center
+                      />
                       <th className="px-4 py-2 text-right">Veprime</th>
                     </tr>
                   </thead>
@@ -534,8 +531,16 @@ export default function Prayers() {
                     <tr>
                       <SortableHeader columnKey="name" label="Emri" />
                       <SortableHeader columnKey="text" label="Teksti" />
-                      <SortableHeader columnKey="category" label="Kategoria" center />
-                      <SortableHeader columnKey="created_at" label="Data" center />
+                      <SortableHeader
+                        columnKey="category"
+                        label="Kategoria"
+                        center
+                      />
+                      <SortableHeader
+                        columnKey="created_at"
+                        label="Data"
+                        center
+                      />
                       <th className="px-4 py-2 text-right">Veprime</th>
                     </tr>
                   </thead>
@@ -559,7 +564,31 @@ export default function Prayers() {
         <section className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {/* Add Prayer */}
           <form
-            onSubmit={handleAddPrayer}
+            onSubmit={async (e) => {
+              e.preventDefault();
+              if (!textPrayer.trim() || !namePrayer.trim())
+                return toast.error("Ju lutem shkruani emrin dhe lutjen.");
+              setLoadingPrayer(true);
+              const { error } = await supabase.from("prayers").insert([
+                {
+                  church_slug: "kbbt",
+                  service_slug: serviceSlug || null,
+                  name: namePrayer,
+                  text: textPrayer,
+                  category: categoryPrayer,
+                  status: "request",
+                },
+              ]);
+              if (error) toast.error("Gabim gjatë shtimit të lutjes.");
+              else {
+                toast.success("Lutja u shtua!");
+                setNamePrayer("");
+                setTextPrayer("");
+                setCategoryPrayer("Të tjera");
+                fetchPrayers();
+              }
+              setLoadingPrayer(false);
+            }}
             className="space-y-4 border rounded-xl bg-white shadow-sm p-6"
           >
             <h2 className="text-xl font-bold">➕ Shto një Lutje</h2>
@@ -596,7 +625,31 @@ export default function Prayers() {
 
           {/* Add Testimony */}
           <form
-            onSubmit={handleAddTestimony}
+            onSubmit={async (e) => {
+              e.preventDefault();
+              if (!textTestimony.trim() || !nameTestimony.trim())
+                return toast.error("Ju lutem shkruani emrin dhe dëshminë.");
+              setLoadingTestimony(true);
+              const { error } = await supabase.from("prayers").insert([
+                {
+                  church_slug: "kbbt",
+                  service_slug: serviceSlug || null,
+                  name: nameTestimony,
+                  text: textTestimony,
+                  category: categoryTestimony,
+                  status: "answered",
+                },
+              ]);
+              if (error) toast.error("Gabim gjatë shtimit të dëshmisë.");
+              else {
+                toast.success("Dëshmia u shtua!");
+                setNameTestimony("");
+                setTextTestimony("");
+                setCategoryTestimony("Të tjera");
+                fetchPrayers();
+              }
+              setLoadingTestimony(false);
+            }}
             className="space-y-4 border rounded-xl bg-white shadow-sm p-6"
           >
             <h2 className="text-xl font-bold">🌟 Shto një Dëshmi</h2>
@@ -633,8 +686,8 @@ export default function Prayers() {
         </section>
       </main>
 
-      {/* 🔹 Edit Modal */}
-      {editingPrayer && (
+      {/* Edit Modal */}
+      {editingPrayer && isAdmin && (
         <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
           <div className="bg-white p-6 rounded-xl shadow-lg w-full max-w-lg space-y-4">
             <h2 className="text-xl font-bold">✏️ Edito Lutjen/Dëshminë</h2>

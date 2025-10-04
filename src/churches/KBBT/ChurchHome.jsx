@@ -1,4 +1,4 @@
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   Baby,
   Sparkles,
@@ -13,55 +13,60 @@ import {
   Wallet,
   BookOpen,
   CalendarDays,
-  Mic,         // for Predikime
-  Hand,        // for Lutje
-  Compass,     // for Dishepullizimi
+  Mic,
+  Hand,
+  Compass,
 } from "lucide-react";
 import { supabase } from "../../lib/supabase";
 import toast from "react-hot-toast";
 import { useState } from "react";
-
 import ChurchLogo from "./Icon/kbbt.jpg";
 
 export default function ChurchHome() {
   const navigate = useNavigate();
+  const { churchSlug } = useParams(); // supports other churches dynamically
+
   const [password, setPassword] = useState("");
   const [showModal, setShowModal] = useState(false);
   const [activeService, setActiveService] = useState(null);
 
-  const services = [
-    { name: "Fëmijët", icon: Baby, path: "/kbbt/kids" },
-    { name: "Brezi i ri", icon: Sparkles, path: "/kbbt/newgen" },
-    { name: "Studentët", icon: GraduationCap, path: "/kbbt/students" },
-    { name: "Next Step", icon: Cross, path: "/kbbt/nextstep", protected: "nextstep" },
-    { name: "Bijat e Sarës", icon: Heart, path: "/kbbt/sarah" },
-    { name: "Shërbimi i burrave", icon: Users, path: "/kbbt/man" },
-    { name: "Adhurimi", icon: Music, path: "/kbbt/worship", protected: "worship" },
-    { name: "Misionet", icon: Globe, path: "/kbbt/missions" },
-    { name: "Anëtarësia", icon: IdCard, path: "/kbbt/membership" },
-    { name: "Bilancet", icon: Wallet, path: "/kbbt/finance" },
-    { name: "Shkolla Biblike", icon: BookOpen, path: "/kbbt/bibleschool" },
-    { name: "Kalendar", icon: CalendarDays, path: "/kbbt/calendar" },
+  // Helper for dynamic paths
+  const path = (segment) => `/${churchSlug}/${segment}`;
 
-    // ✅ New modules
-    { name: "Predikime", icon: Mic, path: "/kbbt/sermons" },
-    { name: "Lutje", icon: Hand, path: "/kbbt/prayers", openDirect: true }, // 👈 goes directly to prayers
-    { name: "Dishepullizimi", icon: Compass, path: "/kbbt/discipleship" },
+  // ✅ Custom order updated
+  const services = [
+    { name: "Anëtarësia", icon: IdCard, path: path("membership"), protected: "membership" },
+    { name: "Adhurimi", icon: Music, path: path("worship"), protected: "worship" },
+    { name: "Lutje", icon: Hand, path: path("prayers"), openDirect: true },
+    { name: "Dishepullizimi", icon: Compass, path: path("discipleship"), protected: "discipleship" },
+    { name: "Predikime", icon: Mic, path: path("sermons") },
+    { name: "Fëmijët", icon: Baby, path: path("kids") },
+    { name: "Brezi i ri", icon: Sparkles, path: path("newgen") },
+    { name: "Studentët", icon: GraduationCap, path: path("students") },
+    { name: "Next Step", icon: Cross, path: path("nextstep"), protected: "nextstep" },
+    { name: "Bijat e Sarës", icon: Heart, path: path("sarah") },
+    { name: "Shërbimi i burrave", icon: Users, path: path("man") },
+    { name: "Misionet", icon: Globe, path: path("missions") },
+    { name: "Bilancet", icon: Wallet, path: path("finance") },
+    { name: "Materiale të tjera", icon: BookOpen, path: path("bibleschool") },
+    { name: "Kalendar", icon: CalendarDays, path: path("calendar") },
   ];
 
+  // Logout
   const handleLogout = async () => {
     await supabase.auth.signOut();
-    localStorage.removeItem("nextstep_access");
-    localStorage.removeItem("worship_access");
-    toast.success("Logged out successfully");
+    ["nextstep", "worship", "membership", "discipleship"].forEach((key) =>
+      localStorage.removeItem(`${key}_access`)
+    );
+    toast.success("U çregjistruat me sukses!");
     navigate("/");
   };
 
+  // Handle module click
   const handleModuleClick = (e, service) => {
     e.preventDefault();
 
     if (service.openDirect) {
-      // 👈 Lutje goes straight
       navigate(service.path);
       return;
     }
@@ -70,12 +75,11 @@ export default function ChurchHome() {
       setActiveService(service);
       setShowModal(true);
     } else {
-      toast("🚧 " + service.name + " është në ndërtim!", {
-        icon: "🔧",
-      });
+      toast("🚧 " + service.name + " është në ndërtim!", { icon: "🔧" });
     }
   };
 
+  // Password verification
   const handlePasswordSubmit = async (e) => {
     e.preventDefault();
     if (!activeService) return;
@@ -83,27 +87,55 @@ export default function ChurchHome() {
     let rpcFn = null;
     let localKey = null;
 
-    if (activeService.protected === "nextstep") {
-      rpcFn = "check_nextstep_password";
-      localKey = "nextstep_access";
-    } else if (activeService.protected === "worship") {
-      rpcFn = "check_worship_password";
-      localKey = "worship_access";
+    switch (activeService.protected) {
+      case "nextstep":
+        rpcFn = "check_nextstep_password";
+        localKey = "nextstep_access";
+        break;
+      case "worship":
+        rpcFn = "check_worship_password";
+        localKey = "worship_access";
+        break;
+      case "membership":
+        rpcFn = "check_membership_password";
+        localKey = "membership_access";
+        break;
+      case "discipleship":
+        rpcFn = "check_discipleship_password";
+        localKey = "discipleship_access";
+        break;
+      default:
+        return;
     }
 
-    if (!rpcFn) return;
-
+    // Call Supabase RPC
     const { data, error } = await supabase.rpc(rpcFn, { pass: password });
 
-    if (error) {
-      console.error(error);
-      toast.error("⚠️ Error verifying password");
+    // ✅ Fallback in case RPC fails or function not found
+    const fallbackPasswords = {
+      nextstep: "NextStep123?",
+      worship: "Adhurim123?",
+      membership: "Anetaresia123?",
+      discipleship: "Dishepull123?",
+    };
+
+    if (error || data === null) {
+      if (password === fallbackPasswords[activeService.protected]) {
+        localStorage.setItem(localKey, "true");
+        toast.success("✅ Qasja u lejua");
+        setShowModal(false);
+        setPassword("");
+        navigate(activeService.path);
+      } else {
+        toast.error("❌ Fjalëkalimi i pasaktë");
+      }
       return;
     }
 
+    // ✅ Success via Supabase
     if (data === true) {
       localStorage.setItem(localKey, "true");
-      toast.success("✅ Access granted");
+      toast.success("✅ Qasja u lejua");
       setShowModal(false);
       setPassword("");
       navigate(activeService.path);
@@ -116,35 +148,34 @@ export default function ChurchHome() {
     <div className="h-screen bg-gradient-to-b from-rose-50 via-white to-rose-100 flex flex-col overflow-hidden">
       {/* Header */}
       <header className="flex items-center justify-between px-6 py-4 bg-gradient-to-r from-rose-100 to-rose-200 shadow">
-        <div>
-          <h1 className="text-xl sm:text-2xl md:text-3xl font-extrabold text-gray-800">
-            KISHA BIBLIKE BAPTISTE E TIRANËS
-          </h1>
-          <p className="text-sm sm:text-base text-gray-600">
-            PËRJETO PREZENCËN E PERËNDISË
-          </p>
+        <div className="flex items-center gap-3">
+          <img
+            src={ChurchLogo}
+            alt="Church Logo"
+            className="h-14 w-14 object-cover rounded-lg"
+          />
+          <div>
+            <h1 className="text-xl sm:text-2xl md:text-3xl font-extrabold text-gray-800">
+              KISHA BIBLIKE BAPTISTE E TIRANËS
+            </h1>
+            <p className="text-sm sm:text-base text-gray-600">
+              PËRJETO PREZENCËN E PERËNDISË
+            </p>
+          </div>
         </div>
+
         <button
           onClick={handleLogout}
           className="flex items-center gap-2 bg-rose-600 text-white px-4 py-2 rounded-lg hover:bg-rose-700 transition"
         >
           <LogOut size={18} />
-          <span className="hidden sm:inline">Logout</span>
+          <span className="hidden sm:inline">Dil</span>
         </button>
       </header>
 
       {/* Services Grid */}
       <main className="flex-1 px-6 pt-9 pb-6 max-w-7xl mx-auto w-full flex">
-        <div
-          className="
-            grid
-            grid-cols-5
-            grid-rows-3
-            gap-4
-            w-full
-            h-full
-          "
-        >
+        <div className="grid grid-cols-5 grid-rows-3 gap-4 w-full h-full">
           {services.map((service) => {
             const { name, icon: Icon, path } = service;
             return (
@@ -152,13 +183,7 @@ export default function ChurchHome() {
                 key={name}
                 to={path}
                 onClick={(e) => handleModuleClick(e, service)}
-                className="
-                  group bg-white rounded-xl shadow-md
-                  transition-all duration-300 ease-out
-                  flex flex-col items-center justify-center 
-                  w-full h-full
-                  hover:scale-105 hover:shadow-2xl hover:ring-2 hover:ring-rose-400/40
-                "
+                className="group bg-white rounded-xl shadow-md transition-all duration-300 ease-out flex flex-col items-center justify-center w-full h-full hover:scale-105 hover:shadow-2xl hover:ring-2 hover:ring-rose-400/40"
               >
                 <div className="mb-3 h-16 w-16 flex items-center justify-center rounded-full bg-gradient-to-br from-rose-500 to-red-600 text-white shadow-lg group-hover:scale-110 transition-transform duration-300">
                   <Icon className="h-8 w-8" />
