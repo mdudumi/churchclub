@@ -73,62 +73,38 @@ export default function MembershipHome() {
           return;
         }
 
-        // 🔹 Gjej kishën sipas churchSlug
-        const { data: church, error: churchErr } = await supabase
+        const { data: church } = await supabase
           .from("churches")
           .select("id, slug")
           .eq("slug", churchSlug)
           .maybeSingle();
-        if (churchErr) console.error(churchErr);
         if (!church) {
-          console.warn("Kisha nuk u gjet për churchSlug:", churchSlug);
           setUserRole("viewer");
           setLoadingRole(false);
           return;
         }
 
-        // 🔹 Gjej shërbimin për membership
-        const { data: services, error: svcErr } = await supabase
+        const { data: services } = await supabase
           .from("services")
           .select("id, slug")
           .in("slug", ["membership", "anetaresia", "anetarsia", "members"])
           .limit(1);
-        if (svcErr) console.error(svcErr);
         const service = services?.[0];
         if (!service) {
-          console.warn("Shërbimi 'membership/anetaresia' nuk u gjet.");
           setUserRole("viewer");
           setLoadingRole(false);
           return;
         }
 
-        // 🔹 Debug logs
-        console.table({
-          user_id: user.id,
-          church_id: church.id,
-          service_id: service.id,
-          churchSlug,
-          serviceSlug: service.slug,
-        });
-
-        // 🔹 Lexo rolin nga service_memberships
-        const { data: membership, error: memErr } = await supabase
+        const { data: membership } = await supabase
           .from("service_memberships")
           .select("role")
           .eq("user_id", user.id)
           .eq("church_id", church.id)
           .eq("service_id", service.id)
           .maybeSingle();
-        if (memErr) console.error(memErr);
 
-        if (!membership) {
-          console.warn(
-            "Asnjë service_memberships për këtë përdorues; duke përdorur 'viewer'."
-          );
-          setUserRole("viewer");
-        } else {
-          setUserRole(membership.role || "viewer");
-        }
+        setUserRole(membership?.role || "viewer");
       } catch (err) {
         console.error(err);
         setUserRole("viewer");
@@ -136,7 +112,6 @@ export default function MembershipHome() {
         setLoadingRole(false);
       }
     };
-
     fetchRole();
   }, [churchSlug]);
 
@@ -151,7 +126,6 @@ export default function MembershipHome() {
       .select("*")
       .eq("church_slug", churchSlug)
       .order("emri", { ascending: true });
-
     if (error) toast.error("Gabim gjatë ngarkimit të anëtarëve!");
     else {
       setMembers(data);
@@ -163,7 +137,6 @@ export default function MembershipHome() {
   useEffect(() => {
     let result = [...members];
     const term = searchTerm.trim().toLowerCase();
-
     if (term) {
       result = result.filter(
         (m) =>
@@ -174,7 +147,6 @@ export default function MembershipHome() {
           (m.telefoni || "").toLowerCase().includes(term)
       );
     }
-
     if (genderFilter !== "Të gjithë")
       result = result.filter((m) => m.gjinia === genderFilter);
     if (roleFilter !== "Të gjithë")
@@ -191,13 +163,11 @@ export default function MembershipHome() {
           ? m.discip_school_completed
           : !m.discip_school_completed
       );
-
     result.sort((a, b) => {
       const A = (a[sortBy] || "").toString().toLowerCase();
       const B = (b[sortBy] || "").toString().toLowerCase();
       return A.localeCompare(B);
     });
-
     setFilteredMembers(result);
   }, [
     members,
@@ -230,20 +200,17 @@ export default function MembershipHome() {
     const { error } = await supabase.storage
       .from("member_photos")
       .upload(fileName, file);
-
     if (error) {
       toast.error("Ngarkimi i fotos dështoi!");
       return null;
     }
-
     const { data: publicUrl } = supabase.storage
       .from("member_photos")
       .getPublicUrl(fileName);
-
     return publicUrl.publicUrl;
   };
 
-  // ✅ Submit (insert/update)
+  // ✅ Submit (insert/update) — fixed for empty date fields
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (userRole !== "admin") {
@@ -257,11 +224,24 @@ export default function MembershipHome() {
       if (!photoUrl) return;
     }
 
-    const payload = {
+    const nullifyEmptyDates = (obj) => {
+      const newObj = { ...obj };
+      for (const key in newObj) {
+        if (
+          key.toLowerCase().includes("date") ||
+          key.toLowerCase().includes("data_")
+        ) {
+          if (newObj[key] === "") newObj[key] = null;
+        }
+      }
+      return newObj;
+    };
+
+    const payload = nullifyEmptyDates({
       ...formData,
       foto_url: photoUrl,
       church_slug: churchSlug,
-    };
+    });
 
     try {
       if (selected) {
@@ -276,7 +256,6 @@ export default function MembershipHome() {
         if (error) throw error;
         toast.success("Anëtari u shtua me sukses!");
       }
-
       setShowForm(false);
       setSelected(null);
       resetForm();
@@ -336,17 +315,15 @@ export default function MembershipHome() {
     setSortBy("emri");
   };
 
-  if (loadingRole) {
+  if (loadingRole)
     return (
       <div className="flex justify-center items-center h-screen text-gray-500">
         Duke ngarkuar të dhënat e përdoruesit...
       </div>
     );
-  }
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-rose-50 via-white to-rose-100 p-6">
-      {/* Debug role banner */}
       <div className="mb-3 text-sm text-gray-700">
         <span className="bg-gray-100 px-2 py-1 rounded">
           Role: <strong>{userRole}</strong> | Church:{" "}
@@ -397,7 +374,6 @@ export default function MembershipHome() {
               className="border rounded-md px-3 py-2 w-52"
             />
           </div>
-
           <div className="flex flex-col">
             <label className="text-xs text-gray-600">Gjinia</label>
             <select
@@ -410,7 +386,6 @@ export default function MembershipHome() {
               <option>Femer</option>
             </select>
           </div>
-
           <div className="flex flex-col">
             <label className="text-xs text-gray-600">Roli</label>
             <select
@@ -425,7 +400,6 @@ export default function MembershipHome() {
               <option>Pastor</option>
             </select>
           </div>
-
           <div className="flex flex-col">
             <label className="text-xs text-gray-600">Statusi Martesor</label>
             <select
@@ -440,7 +414,6 @@ export default function MembershipHome() {
               <option>E Ve</option>
             </select>
           </div>
-
           <div className="flex flex-col">
             <label className="text-xs text-gray-600">Aktiviteti</label>
             <select
@@ -453,7 +426,6 @@ export default function MembershipHome() {
               <option>Jo Aktiv</option>
             </select>
           </div>
-
           <div className="flex flex-col">
             <label className="text-xs text-gray-600">
               Shkolla Dishepullizimit
@@ -468,7 +440,6 @@ export default function MembershipHome() {
               <option>Jo përfunduar</option>
             </select>
           </div>
-
           <div className="flex flex-col">
             <label className="text-xs text-gray-600">Rendit sipas</label>
             <select
@@ -484,7 +455,6 @@ export default function MembershipHome() {
               <option value="salvation_date">Datës së Shpëtimit</option>
             </select>
           </div>
-
           <button
             onClick={clearFilters}
             className="flex items-center gap-1 bg-gray-100 px-3 py-2 rounded-md hover:bg-gray-200 text-gray-600 mt-5"
@@ -502,7 +472,6 @@ export default function MembershipHome() {
               <th className="px-4 py-2 text-left">Foto</th>
               <th className="px-4 py-2 text-left">Emri</th>
               <th className="px-4 py-2 text-left">Mbiemri</th>
-             
               <th className="px-4 py-2 text-left">Telefoni</th>
               <th className="px-4 py-2 text-left">Qyteti</th>
               <th className="px-4 py-2 text-left">Roli</th>
@@ -520,23 +489,24 @@ export default function MembershipHome() {
                       className="w-10 h-10 rounded-full object-cover"
                     />
                   ) : (
-                    <User className="text-gray-400" />
+                    <User className="text-gray-400" size={24} />
                   )}
                 </td>
                 <td className="px-4 py-2">{m.emri}</td>
                 <td className="px-4 py-2">{m.mbiemri}</td>
-                <td className="px-4 py-2">{m.telefoni}</td>
-                <td className="px-4 py-2">{m.qyteti}</td>
+                <td className="px-4 py-2">{m.telefoni || "—"}</td>
+                <td className="px-4 py-2">{m.qyteti || "—"}</td>
                 <td className="px-4 py-2">{m.roli_kishes}</td>
                 <td className="px-4 py-2 flex justify-center gap-3">
                   <button
                     onClick={() =>
                       navigate(`/${churchSlug}/membership/${m.id}`)
                     }
-                    className="text-blue-600 hover:text-blue-800"
+                    className="text-blue-600 hover:text-blue-800 font-medium"
                   >
-                    Shiko Profilin
+                    Shiko
                   </button>
+
                   {userRole === "admin" && (
                     <>
                       <button
@@ -549,6 +519,7 @@ export default function MembershipHome() {
                       >
                         <Edit size={18} />
                       </button>
+
                       <button
                         onClick={() => handleDelete(m.id)}
                         className="text-red-600 hover:text-red-800"
@@ -589,6 +560,7 @@ export default function MembershipHome() {
                 }
                 className="border rounded-md px-3 py-2"
               />
+
               <input
                 type="text"
                 placeholder="Mbiemri"
@@ -599,6 +571,7 @@ export default function MembershipHome() {
                 }
                 className="border rounded-md px-3 py-2"
               />
+
               <select
                 value={formData.gjinia}
                 onChange={(e) =>
@@ -768,7 +741,8 @@ export default function MembershipHome() {
                     ...formData,
                     ministries: e.target.value
                       .split(",")
-                      .map((m) => m.trim()),
+                      .map((m) => m.trim())
+                      .filter(Boolean),
                   })
                 }
                 className="border rounded-md px-3 py-2"
@@ -829,3 +803,5 @@ export default function MembershipHome() {
     </div>
   );
 }
+
+             
